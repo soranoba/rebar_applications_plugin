@@ -1,0 +1,7 @@
+%% vim: set filetype=erlang : -*- erlang -*-
+{application, rebar_applications_plugin,
+ [{description, "A rebar plugin which automatically generates 'applications' value in the application resource file"},
+  {vsn, git},
+  {registered, []},
+  {applications, [kernel, stdlib]},
+  {env, []}]}.
