@@ -8,13 +8,13 @@
 %%----------------------------------------------------------------------------------------------------------------------
 %% Exported API
 %%----------------------------------------------------------------------------------------------------------------------
--export(['fill-apps'/2]).
+-export([post_compile/2]).
 
 %%----------------------------------------------------------------------------------------------------------------------
 %% Macros
 %%----------------------------------------------------------------------------------------------------------------------
 -define(OPTION(Key, Config, Default), proplists:get_value(Key, rebar_config:get(Config, fill_apps_opts, []), Default)).
--define(DEBUG(Format, Args), rebar_log:log(debug, "[~s:~p] "++Format++"~n", [?MODULE, ?LINE | Args])).
+-define(DEBUG(Format, Args), rebar_log:log(error, "[~s:~p] "++Format++"~n", [?MODULE, ?LINE | Args])).
 -define(XREF_SERVER, ?MODULE).
 -define(APPS_CACHE_KEY, {?MODULE, apps_cache}).
 
@@ -22,24 +22,25 @@
 %% Exported Functions
 %%----------------------------------------------------------------------------------------------------------------------
 %% @doc 対象アプリケーションの実際の依存関係を解析して、アプリケーションリソースファイルの`applications'項目を自動生成する
--spec 'fill-apps'(rebar_config:config(), filename:name()) -> ok | {ok, rebar_config:config()}.
-'fill-apps'(Config00, AppFile) ->
+-spec post_compile(rebar_config:config(), filename:name()) -> ok | {ok, rebar_config:config()}.
+post_compile(Config0, AppFile) ->
     case AppFile =/= undefined andalso rebar_app_utils:is_app_src(AppFile) of
         false -> ok; % `AppFile'が"*.app.src"ではない場合は対象外
         true  ->
             ?DEBUG("appfile=~s", [AppFile]),
 
-            Config0 = init_xref(Config00),
-            {Config1, AppName} = rebar_app_utils:app_name(Config0, AppFile),
-            {Config2, Applications0} = rebar_app_utils:app_applications(Config1, AppFile),
+            Config1 = init_xref(Config0),
+            Config2 = add_current_app_to_xref(AppFile, Config1),
+            {Config3, AppName} = rebar_app_utils:app_name(Config2, AppFile),
+            {Config4, Applications0} = rebar_app_utils:app_applications(Config3, AppFile),
             ?DEBUG("appname=~s", [AppName]),
 
-            Applications1 = collect_direct_depending_applications(AppName, Config2),
+            Applications1 = collect_direct_depending_applications(AppName, Config4),
             Applications2 = merge_applications(Applications0, Applications1),
             ?DEBUG("apps: original=~w, collected=~w, result=~w", [Applications0, Applications1, Applications2]),
 
             ok = rewrite_applications(AppFile, Applications2),
-            {ok, Config2}
+            {ok, Config4}
     end.
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -69,10 +70,12 @@ init_xref(Config0) ->
                               false           -> AccConfig0;
                               {true, AppFile} ->
                                   {AccConfig1, AppName} = rebar_app_utils:app_name(AccConfig0, AppFile),
-                                  _ = case xref:add_application(Xref, filename:dirname(EbinPath), [{name, AppName}]) of
-                                          {ok, App} -> ?DEBUG("xref added: app=~s", [App]);
-                                          _         -> ok
-                                      end,
+                                  case lists:member(AppName, get_root_and_subapps(AccConfig0)) of
+                                      true  -> ok; % TODO:
+                                      false ->
+                                          Result = xref:add_application(Xref, filename:dirname(EbinPath), [{name, AppName}]),
+                                          ?DEBUG("xref added: app=~s, result=~w", [AppName, Result])
+                                  end,
                                   AccConfig1
                           end
                   end,
@@ -83,6 +86,12 @@ init_xref(Config0) ->
                                code:get_path())),
             Config1
     end.
+
+add_current_app_to_xref(AppFile, Config0) ->
+    {Config1, AppName} = rebar_app_utils:app_name(Config0, AppFile),
+    Result = xref:add_application(?XREF_SERVER, filename:dirname(filename:dirname(AppFile)), [{name, AppName}]),
+    ?DEBUG("xref added: app=~s, result=~w", [AppName, Result]),
+    Config1.
 
 %% @doc xrefを使って`AppName'が直接依存(使用)しているアプリケーション群を取得する
 -spec collect_direct_depending_applications(AppName, rebar_config:config()) -> ordsets:ordset(AppName) when
