@@ -14,7 +14,7 @@
 %% Macros
 %%----------------------------------------------------------------------------------------------------------------------
 -define(OPTION(Key, Config, Default), proplists:get_value(Key, rebar_config:get(Config, fill_apps_opts, []), Default)).
--define(DEBUG(Format, Args), rebar_log:log(error, "[~s:~p] "++Format++"~n", [?MODULE, ?LINE | Args])).
+-define(DEBUG(Format, Args), rebar_log:log(debug, "[~s:~p] "++Format++"~n", [?MODULE, ?LINE | Args])).
 -define(XREF_SERVER, ?MODULE).
 -define(APPS_CACHE_KEY, {?MODULE, apps_cache}).
 
@@ -27,20 +27,24 @@ post_compile(Config0, AppFile) ->
     case AppFile =/= undefined andalso rebar_app_utils:is_app_src(AppFile) of
         false -> ok; % `AppFile'が"*.app.src"ではない場合は対象外
         true  ->
-            ?DEBUG("appfile=~s", [AppFile]),
+            case is_deps_app(AppFile, Config0) of
+                true  -> ok; % 依存アプリケーションの場合は対象外
+                false ->
+                    ?DEBUG("appfile=~s", [AppFile]),
 
-            Config1 = init_xref(Config0),
-            Config2 = add_current_app_to_xref(AppFile, Config1),
-            {Config3, AppName} = rebar_app_utils:app_name(Config2, AppFile),
-            {Config4, Applications0} = rebar_app_utils:app_applications(Config3, AppFile),
-            ?DEBUG("appname=~s", [AppName]),
+                    Config1 = init_xref(Config0),
+                    Config2 = add_current_app_to_xref(AppFile, Config1),
+                    {Config3, AppName} = rebar_app_utils:app_name(Config2, AppFile),
+                    {Config4, Applications0} = rebar_app_utils:app_applications(Config3, AppFile),
+                    ?DEBUG("appname=~s", [AppName]),
 
-            Applications1 = collect_direct_depending_applications(AppName, Config4),
-            Applications2 = merge_applications(Applications0, Applications1),
-            ?DEBUG("apps: original=~w, collected=~w, result=~w", [Applications0, Applications1, Applications2]),
+                    Applications1 = collect_direct_depending_applications(AppName, Config4),
+                    Applications2 = merge_applications(Applications0, Applications1),
+                    ?DEBUG("apps: original=~w, collected=~w, result=~w", [Applications0, Applications1, Applications2]),
 
-            ok = rewrite_applications(AppFile, Applications2),
-            {ok, Config4}
+                    ok = rewrite_applications(AppFile, Applications2),
+                    {ok, Config4}
+            end
     end.
 
 %%----------------------------------------------------------------------------------------------------------------------
@@ -63,6 +67,10 @@ init_xref(Config0) ->
             SystemLibDir = code:lib_dir(),
             IncludeSystemApps = ?OPTION(include_system_apps, Config0, false),
 
+            %% ルートおよびサブアプリケーション群は、初期登録からは除外する
+            %% (コンパイル前の不完全な状態で登録されてしまうのを避けるため)
+            Excludes = gb_sets:from_list(get_root_and_subapps(Config0)),
+
             Config1 =
                 lists:foldl(
                   fun (EbinPath, AccConfig0) ->
@@ -70,11 +78,11 @@ init_xref(Config0) ->
                               false           -> AccConfig0;
                               {true, AppFile} ->
                                   {AccConfig1, AppName} = rebar_app_utils:app_name(AccConfig0, AppFile),
-                                  case lists:member(AppName, get_root_and_subapps(AccConfig0)) of
-                                      true  -> ok; % TODO:
+                                  case gb_sets:is_member(AppName, Excludes) of
+                                      true  -> ok;
                                       false ->
                                           Result = xref:add_application(Xref, filename:dirname(EbinPath), [{name, AppName}]),
-                                          ?DEBUG("xref added: app=~s, result=~w", [AppName, Result])
+                                          ?DEBUG("xref added: result=~w", [Result])
                                   end,
                                   AccConfig1
                           end
@@ -87,30 +95,26 @@ init_xref(Config0) ->
             Config1
     end.
 
+-spec add_current_app_to_xref(filename:name(), rebar_config:config()) -> rebar_config:config().
 add_current_app_to_xref(AppFile, Config0) ->
     {Config1, AppName} = rebar_app_utils:app_name(Config0, AppFile),
     Result = xref:add_application(?XREF_SERVER, filename:dirname(filename:dirname(AppFile)), [{name, AppName}]),
-    ?DEBUG("xref added: app=~s, result=~w", [AppName, Result]),
+    ?DEBUG("xref added: result=~w", [Result]),
     Config1.
 
 %% @doc xrefを使って`AppName'が直接依存(使用)しているアプリケーション群を取得する
 -spec collect_direct_depending_applications(AppName, rebar_config:config()) -> ordsets:ordset(AppName) when
       AppName :: atom().
 collect_direct_depending_applications(AppName, Config) ->
-    {ok, Calls} = xref:analyze(?XREF_SERVER, {application_call, AppName}),
+    {ok, Calls0} = xref:analyze(?XREF_SERVER, {application_call, AppName}),
+    Calls1 = ordsets:from_list(Calls0),
     case rebar_utils:processing_base_dir(Config) of
-        true ->
+        false -> ordsets:del_element(AppName, Calls1);
+        true  ->
             %% ルートアプリケーションは全てのサブアプリケーションを依存に含める
             Includes = get_root_and_subapps(Config),
-            Excludes = [AppName],
             ?DEBUG("includes: ~w", [Includes]),
-            ordsets:subtract(ordsets:union(Calls, Includes), Excludes);
-        false ->
-            %% ルート以外は、循環参照の可能性を減らすために、サブアプリケーションおよびルートを依存に含めないようにする
-            %% (どうしても含めたい場合は、"*.app.src"に直接指定すること)
-            Excludes = ordsets:add_element(AppName, get_root_and_subapps(Config)),
-            ?DEBUG("excludes: ~w", [Excludes]),
-            ordsets:subtract(Calls, Excludes)
+            ordsets:del_element(AppName, ordsets:union(Calls1, Includes))
     end.
 
 -spec get_root_and_subapps(rebar_config:config()) -> ordsets:ordset(atom()).
@@ -146,3 +150,10 @@ rewrite_applications(AppFile, Applications) ->
     {ok, [{application, AppName, AppKeys0}]} = file:consult(EbinAppFile),
     AppKeys1 = lists:keystore(applications, 1, AppKeys0, {applications, Applications}),
     file:write_file(EbinAppFile, io_lib:format("~p.\n", [{application, AppName, AppKeys1}])).
+
+-spec is_deps_app(filename:name(), rebar_config:config()) -> boolean().
+is_deps_app(AppFile, Config) ->
+    case rebar_deps:get_deps_dir(Config) of
+        {true, DepsDir} -> lists:prefix(DepsDir, AppFile);
+        _               -> false
+    end.
