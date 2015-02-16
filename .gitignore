@@ -1,7 +1,4 @@
-# rebar create template=stdXXX で生成される無視すべきファイル
 deps
-
-# Erlang/rebarでgit管理すべきでないファイル
 .eunit
 *.o
 *.beam
@@ -12,10 +9,7 @@ doc/*
 !doc/overview.edoc
 !doc/*.md
 .rebar
-
-# Vimでできる必要ないファイル
 *.swp
 tags
-
-# その他
 *~
+gen_deps_graph

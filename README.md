@@ -101,3 +101,47 @@ rebar_applications_plugin
   - `applications`項目が適切に記述されていれば、ルートとなるアプリケーションだけを指定すれば良くなるので、依存アプリケーションの増減に伴う記述修正の手間が減る
 
 なお、複数アプリケーション間に循環する依存関係が指定されている場合は`application:ensure_all_started/1`の呼び出し時等に、無限ループとなってしまうので注意が必要。<br />
+
+
+gen_deps_graph
+===============
+
+アプリケーション間の依存関係を表したグラフを生成するためのツール。
+
+- 依存関係の解析には[xref](http://www.erlang.org/doc/man/xref.html)を使用
+- 生成するグラフの書式は[graphviz](http://www.graphviz.org/)に準拠
+
+使い方
+------
+
+```bash
+# ビルド
+$ make script
+
+# ヘルプ
+$ ./gen_deps_graph
+Usage: gen_deps_graph call|use DEPTH ROOT_APPLICATION[,ROOT_APPLICATION]* [EXCLUDE_APPLICATION[,EXCLUDE_APPLICATION]*]
+
+# 実行例: cryptoが直接(DEPTH=1)使用しているアプリケーションのグラフ
+$ DEPTH=1
+$ ./gen_deps_graph call $DEPTH crypto
+digraph crypto {
+ crypto -> kernel;
+ crypto -> stdlib;
+}
+
+# 実行例: cryptoを直接(DEPTH=1)使用しているアプリケーションのグラフ
+$ ./gen_deps_graph use $DEPTH crypto
+digraph crypto {
+ common_test -> crypto;
+ compiler -> crypto;
+ public_key -> crypto;
+ snmp -> crypto;
+ ssh -> crypto;
+ ssl -> crypto;
+ stdlib -> crypto;
+}
+
+# PNG形式に変換
+$ ./gen_deps_graph use $DEPTH crypto | dot -Tpng -o crypto.png /dev/stdin
+```

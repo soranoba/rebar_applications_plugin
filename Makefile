@@ -29,6 +29,9 @@ eunit:
 edoc:
 	@./rebar doc skip_deps=true
 
+escript: compile
+	@./rebar escriptize
+
 start: compile
 	@ERL_LIBS=$(LIBS) erl +stbt db +K true -pz ebin -s reloader -eval 'erlang:display(application:ensure_all_started($(APP))).'
 
