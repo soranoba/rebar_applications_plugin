@@ -33,13 +33,17 @@ rebar_applications_plugin
 %% - include_system_lib:
 %%   - code:lib_dir()以下に配置されているライブラリ群を依存性解析対象に含めるかどうか
 %%   - 含めた場合、処理時間が長くなってしまうので、デフォルトはfalse
-{fill_apps_opts, [{include_system_lib, false}]}.
+%% - exclude_apps:
+%%   - 解析対象から除外するアプリケーション群を指定する
+%%   - デフォルトは[]
+{fill_apps_opts, [{include_system_lib, false},
+                  {exclude_apps, [hoge, fuga]}]}.
 
 %% 依存ライブラリに追加する
 {deps,
   [
    {rebar_applications_plugin, ".*",
-     {git, "https://github.com/sile/rebar_applications_plugin", {tag, "v0.1.0"}}}
+     {git, "https://github.com/sile/rebar_applications_plugin", {tag, "v0.1.2"}}}
   ]}.
 ```
 

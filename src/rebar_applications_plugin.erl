@@ -66,10 +66,11 @@ init_xref(Config0) ->
             %% (所要時間が長くなるので、デフォルトは`false')
             SystemLibDir = code:lib_dir(),
             IncludeSystemApps = ?OPTION(include_system_apps, Config0, false),
+            Excludes0 = ?OPTION(exclude_apps, Config0, []),
 
             %% ルートおよびサブアプリケーション群は、初期登録からは除外する
             %% (コンパイル前の不完全な状態で登録されてしまうのを避けるため)
-            Excludes = gb_sets:from_list(get_root_and_subapps(Config0)),
+            Excludes = gb_sets:from_list(get_root_and_subapps(Config0) ++ Excludes0),
 
             Config1 =
                 lists:foldl(
