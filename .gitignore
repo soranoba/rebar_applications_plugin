@@ -13,3 +13,4 @@ doc/*
 tags
 *~
 gen_deps_graph
+_build
