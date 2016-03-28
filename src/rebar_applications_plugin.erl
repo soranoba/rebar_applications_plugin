@@ -25,7 +25,9 @@ init(State) ->
     Provider = providers:create([{name, generate},
                                  {module, ?MODULE},
                                  {namespace, auto_app_src},
+                                 {bare, true},
                                  {short_desc, ""},
+                                 {deps, [{default, lock}]},
                                  {desc, ""},
                                  {opts, [{exclude_apps,        undefined, exclude, binary},
                                          {include_system_apps, undefined, all,     boolean}]}
@@ -33,13 +35,12 @@ init(State) ->
     {ok, rebar_state:add_provider(State, Provider)}.
 
 do(State) ->
-    Apps = [rebar_state:current_app(State) | rebar_state:project_apps(State)],
+    Apps = rebar_state:project_apps(State),
+    ?DEBUG("apps = ~p", [ [rebar_app_info:name(App) || App <- Apps] ]),
     ok = init_xref(State),
     lists:foreach(fun(App) ->
-                          AppNameAtom  = binary_to_atom(rebar_app_info:name(App), utf8),
-                          Applications = collect_direct_depending_applications(AppNameAtom, State),
-                          AppFile      = rebar_app_info:app_file(App),
-                          rewrite_applications(AppFile, Applications)
+                          Applications = collect_direct_depending_applications(App, State),
+                          rewrite_applications(App, Applications)
                   end, Apps),
     {ok, State}.
 
@@ -62,47 +63,42 @@ init_xref(State) ->
 
             %% `{include_system_apps, false}'がオプションで指定されている場合は、システムライブラリ群は解析対象に含めない
             %% (所要時間が長くなるので、デフォルトは`false')
-            SystemLibDir    = code:lib_dir(),
             {Args, _}       = rebar_state:command_parsed_args(State),
             IsAll           = proplists:get_value(include_system_apps, Args, false),
             ExcludeAppNames = binary:split(proplists:get_value(exclude_apps, Args, <<>>), <<",">>, [global]),
 
-            DepEbinAndApps  = [{filename:absname(rebar_app_info:ebin_dir(App)), App}
-                               || App <- rebar_state:all_deps(State)],
+            ?DEBUG("include_system_apps = ~p", [IsAll]),
+            ?DEBUG("exclude_apps = ~p", [ExcludeAppNames]),
+            AllApps = rebar_state:all_deps(State) ++ rebar_state:project_apps(State),
+            ?DEBUG("all apps = ~p", [ [rebar_app_info:name(App) || App <- AllApps] ]),
 
-            EBinPaths = lists:filter(fun (EbinPath) ->
-                                             IsAll orelse (not lists:prefix(SystemLibDir, EbinPath))
-                                     end, code:get_path()),
-            lists:foreach(fun(EBinPath) ->
-                                  DoAdd = case proplists:lookup(filename:absname(EBinPath), DepEbinAndApps) of
-                                              none     -> true;
-                                              {_, App} -> not lists:member(rebar_app_info:name(App), ExcludeAppNames)
-                                          end,
-                                  case DoAdd of
-                                      true  -> xref:add_directory(Xref, EBinPath);
-                                      false -> ok
+            lists:foreach(fun(App) ->
+                                  case lists:member(AppName = rebar_app_info:name(App), ExcludeAppNames) of
+                                      true  -> ok;
+                                      false ->
+                                          ?DEBUG("add : ~p (~s)", [AppName, rebar_app_info:dir(App)]),
+                                          ?DEBUG("result = ~p", [xref:add_application(Xref, rebar_app_info:dir(App), [{name, binary_to_atom(AppName, utf8)}])])
                                   end
-                          end, EBinPaths)
+                          end, AllApps)
     end.
 
 %% @doc xrefを使って`AppName'が直接依存(使用)しているアプリケーション群を取得する
--spec collect_direct_depending_applications(AppName, rebar_state:t()) -> ordsets:ordset(AppName) when
-      AppName :: atom().
-collect_direct_depending_applications(AppName, State) ->
-    {ok, Calls0} = xref:analyze(?XREF_SERVER, {application_call, AppName}),
+collect_direct_depending_applications(App, State) ->
+    {ok, Calls0} = xref:analyze(?XREF_SERVER, {application_call, AppName = binary_to_atom(rebar_app_info:name(App), utf8)}),
+    ?DEBUG("anaylze result = ~p", [Calls0]),
     Calls1 = ordsets:from_list(Calls0),
-    case rebar_app_info:name(rebar_state:currennt_app(State)) =:= atom_to_binary(AppName, utf8) of
-        false -> ordsets:del_element(AppName, Calls1);
+    case (ProjectApps = rebar_state:project_apps(State)) =/= [] andalso hd(ProjectApps) =:= App of
+        false -> ordsets:to_list(ordsets:del_element(AppName, Calls1));
         true  ->
             %% ルートアプリケーションは全てのサブアプリケーションを依存に含める
-            Includes = rebar_state:project_apps(State),
+            Includes = [binary_to_atom(rebar_app_info:name(I), utf8) || I <- ProjectApps],
             ?DEBUG("includes: ~w", [Includes]),
-            ordsets:del_element(AppName, ordsets:union(Calls1, Includes))
+            ordsets:to_list(ordsets:del_element(AppName, ordsets:union(Calls1, ordsets:from_list(Includes))))
     end.
 
--spec rewrite_applications(filename:name(), [atom()]) -> ok | {error, Reason::term()}.
-rewrite_applications(AppFile, Applications) ->
-    EbinAppFile = rebar_app_utils:app_src_to_app(AppFile),
-    {ok, [{application, AppName, AppKeys0}]} = file:consult(EbinAppFile),
+rewrite_applications(App, Applications) ->
+    AppFile = rebar_app_info:app_file(App),
+    ?DEBUG(".app = ~s", [AppFile]),
+    {ok, [{application, AppName, AppKeys0}]} = file:consult(AppFile),
     AppKeys1 = lists:keystore(applications, 1, AppKeys0, {applications, Applications}),
-    file:write_file(EbinAppFile, io_lib:format("~p.\n", [{application, AppName, AppKeys1}])).
+    file:write_file(AppFile, io_lib:format("~p.\n", [{application, AppName, AppKeys1}])).
