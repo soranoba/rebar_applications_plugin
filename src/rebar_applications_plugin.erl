@@ -30,7 +30,8 @@ init(State) ->
                                  {deps, [{default, lock}]},
                                  {desc, ""},
                                  {opts, [{exclude_apps,        undefined, exclude, binary},
-                                         {include_system_apps, undefined, all,     boolean}]}
+                                         {include_system_apps, undefined, all,     boolean}
+                                        ]}
                                 ]),
     {ok, rebar_state:add_provider(State, Provider)}.
 
@@ -39,8 +40,9 @@ do(State) ->
     ?DEBUG("apps = ~p", [ [rebar_app_info:name(App) || App <- Apps] ]),
     ok = init_xref(State),
     lists:foreach(fun(App) ->
-                          Applications = collect_direct_depending_applications(App, State),
-                          rewrite_applications(App, Applications)
+                          Applications  = collect_direct_depending_applications(App, State),
+                          Applications1 = lists:usort(rebar_app_info:applications(App) ++ Applications),
+                          rewrite_applications(App, Applications1)
                   end, Apps),
     {ok, State}.
 
@@ -77,7 +79,8 @@ init_xref(State) ->
                                       true  -> ok;
                                       false ->
                                           ?DEBUG("add : ~p (~s)", [AppName, rebar_app_info:dir(App)]),
-                                          ?DEBUG("result = ~p", [xref:add_application(Xref, rebar_app_info:dir(App), [{name, binary_to_atom(AppName, utf8)}])])
+                                          ?DEBUG("result = ~p", [xref:add_application(Xref, filename:dirname(rebar_app_info:ebin_dir(App)),
+                                                                                      [{name, binary_to_atom(AppName, utf8)}])])
                                   end
                           end, AllApps)
     end.
@@ -86,14 +89,13 @@ init_xref(State) ->
 collect_direct_depending_applications(App, State) ->
     {ok, Calls0} = xref:analyze(?XREF_SERVER, {application_call, AppName = binary_to_atom(rebar_app_info:name(App), utf8)}),
     ?DEBUG("anaylze result = ~p", [Calls0]),
-    Calls1 = ordsets:from_list(Calls0),
     case (ProjectApps = rebar_state:project_apps(State)) =/= [] andalso hd(ProjectApps) =:= App of
-        false -> ordsets:to_list(ordsets:del_element(AppName, Calls1));
+        false -> Calls0 -- [AppName];
         true  ->
             %% ルートアプリケーションは全てのサブアプリケーションを依存に含める
             Includes = [binary_to_atom(rebar_app_info:name(I), utf8) || I <- ProjectApps],
             ?DEBUG("includes: ~w", [Includes]),
-            ordsets:to_list(ordsets:del_element(AppName, ordsets:union(Calls1, ordsets:from_list(Includes))))
+            lists:usort(Includes ++ Calls0) -- [AppName]
     end.
 
 rewrite_applications(App, Applications) ->
