@@ -22,12 +22,13 @@
 %%----------------------------------------------------------------------------------------------------------------------
 
 init(State) ->
+    Profile = hd(rebar_state:current_profiles(State)),
     Provider = providers:create([{name, generate},
                                  {module, ?MODULE},
                                  {namespace, auto_app_src},
                                  {bare, true},
                                  {short_desc, ""},
-                                 {deps, [{default, lock}]},
+                                 {deps, [{Profile, lock}]},
                                  {desc, ""},
                                  {opts, [{exclude_apps,        undefined, exclude, binary},
                                          {include_system_apps, undefined, all,     boolean}
@@ -39,10 +40,21 @@ do(State) ->
     Apps = rebar_state:project_apps(State),
     ?DEBUG("apps = ~p", [ [rebar_app_info:name(App) || App <- Apps] ]),
     ok = init_xref(State),
+    ProjectDirs = rebar_state:get(State, project_app_dirs),
+    DirAppNames = [{rebar_app_info:dir(App), rebar_app_info:name(App)} || App <- Apps],
+    OrderingProjectAppNames = lists:foldl(fun(Dir, Acc) ->
+                                                  case proplists:lookup(filename:absname(Dir), DirAppNames) of
+                                                      none   -> Acc;
+                                                      {_, V} -> [V | Acc]
+                                                  end
+                                          end, [], ProjectDirs),
     lists:foreach(fun(App) ->
                           Applications  = collect_direct_depending_applications(App, State),
                           Applications1 = lists:usort(rebar_app_info:applications(App) ++ Applications),
-                          rewrite_applications(App, Applications1)
+                          AppName = rebar_app_info:name(App),
+                          {Sub, _} = lists:splitwith(fun(AppName0) -> AppName =/= AppName0 end, OrderingProjectAppNames),
+                          Applications2 = Applications1 -- lists:map(fun(X) -> binary_to_atom(X, utf8) end, Sub),
+                          rewrite_applications(App, Applications2)
                   end, Apps),
     {ok, State}.
 
